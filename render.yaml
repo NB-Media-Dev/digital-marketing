@@ -1,0 +1,39 @@
+# Render blueprint for the MarkOps API (Docker).
+# MySQL is NOT provisioned here (Render offers Postgres only) — point DATABASE_URL at a
+# managed MySQL (Railway / PlanetScale / Aiven). Deploy the frontend on Vercel separately.
+services:
+  - type: web
+    name: markops-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: JWT_REFRESH_EXPIRES_IN
+        value: 7d
+      - key: META_API_VERSION
+        value: v21.0
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # Set these in the Render dashboard (not committed):
+      - key: DATABASE_URL
+        sync: false
+      - key: CLIENT_URL          # your Render/Vercel frontend URL, e.g. https://markops.onrender.com
+        sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_REDIRECT_URI
+        sync: false
