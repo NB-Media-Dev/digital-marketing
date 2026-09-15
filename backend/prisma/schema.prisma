@@ -1,0 +1,667 @@
+// MarkOps — Prisma schema (MySQL 8+)
+// Fields are camelCase in code and @map to snake_case columns.
+// History/audit tables are append-only; business records use soft-delete (deletedAt).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ────────────────────────────────────────────────
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TaskStatus {
+  DRAFT
+  ASSIGNED
+  ACCEPTED
+  IN_PROGRESS
+  SUBMITTED
+  UNDER_REVIEW
+  REVISION_REQUIRED
+  RESUBMITTED
+  APPROVED
+  PUBLISHED
+  COMPLETED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum VersionStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  REVISION_REQUIRED
+  APPROVED
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+enum AdStatus {
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+}
+
+enum SyncSource {
+  SCHEDULED
+  MANUAL
+}
+
+enum SyncStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+enum Platform {
+  META
+  FACEBOOK
+  INSTAGRAM
+  GOOGLE
+  WEBSITE
+  WHATSAPP
+  MANUAL
+  OTHER
+}
+
+enum LeadStatus {
+  NEW
+  ASSIGNED
+  CONTACTED
+  INTERESTED
+  NOT_INTERESTED
+  FOLLOW_UP
+  QUALIFIED
+  CONVERTED
+  LOST
+}
+
+enum CallOutcome {
+  CONNECTED
+  NOT_CONNECTED
+  INTERESTED
+  NOT_INTERESTED
+  CALL_BACK
+  QUALIFIED
+  CONVERTED
+  LOST
+}
+
+enum FollowupStatus {
+  PENDING
+  DONE
+  MISSED
+}
+
+enum ConversionStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  BANK_TRANSFER
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+// ── Identity & RBAC ──────────────────────────────────────
+model Role {
+  id          String           @id @default(uuid())
+  code        String           @unique
+  name        String
+  description String?
+  isSystem    Boolean          @default(false) @map("is_system")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  users       User[]
+  permissions RolePermission[]
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique
+  description String?
+  roles       RolePermission[]
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @map("role_id")
+  permissionId String     @map("permission_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Team {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  users       User[]
+  @@map("teams")
+}
+
+model User {
+  id            String     @id @default(uuid())
+  employeeCode  String     @unique @map("employee_code")
+  name          String
+  email         String     @unique
+  mobile        String?
+  passwordHash  String     @map("password_hash")
+  roleId        String     @map("role_id")
+  teamId        String?    @map("team_id")
+  profileImage  String?    @map("profile_image")
+  status        UserStatus @default(ACTIVE)
+  isSeed        Boolean    @default(false) @map("is_seed")
+  lastLoginAt   DateTime?  @map("last_login_at")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  deletedAt     DateTime?  @map("deleted_at")
+
+  role          Role       @relation(fields: [roleId], references: [id])
+  team          Team?      @relation(fields: [teamId], references: [id])
+  refreshTokens RefreshToken[]
+  tasksAssigned Task[]     @relation("TaskAssignee")
+  leadsAssigned Lead[]     @relation("LeadTelecaller")
+  taskComments  TaskComment[]
+
+  @@index([roleId])
+  @@index([status])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenHash String   @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  userAgent String?  @map("user_agent")
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ── Marketing ────────────────────────────────────────────
+model Campaign {
+  id         String         @id @default(uuid())
+  code       String         @unique
+  name       String
+  objective  String?
+  status     CampaignStatus @default(DRAFT)
+  startDate  DateTime?      @map("start_date") @db.Date
+  endDate    DateTime?      @map("end_date") @db.Date
+  budget     Decimal        @default(0) @db.Decimal(14, 2)
+  leadTarget Int            @default(0) @map("lead_target")
+  createdBy  String?        @map("created_by")
+  isSeed     Boolean        @default(false) @map("is_seed")
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+  deletedAt  DateTime?      @map("deleted_at")
+  ads        Ad[]
+  tasks      Task[]
+  leads      Lead[]
+  @@index([status])
+  @@map("campaigns")
+}
+
+model Ad {
+  id          String     @id @default(uuid())
+  code        String     @unique
+  campaignId  String     @map("campaign_id")
+  name        String
+  platform    Platform   @default(META)
+  externalRef String?    @map("external_ref")
+  status      AdStatus   @default(SCHEDULED)
+  startDate   DateTime?  @map("start_date") @db.Date
+  budget      Decimal    @default(0) @db.Decimal(14, 2)
+  createdBy   String?    @map("created_by")
+  isSeed      Boolean    @default(false) @map("is_seed")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  deletedAt   DateTime?  @map("deleted_at")
+  campaign    Campaign   @relation(fields: [campaignId], references: [id])
+  metrics     AdMetric[]
+  leads       Lead[]
+  @@index([campaignId])
+  @@index([status])
+  @@map("ads")
+}
+
+model AdMetric {
+  id          String   @id @default(uuid())
+  adId        String   @map("ad_id")
+  statDate    DateTime @map("stat_date") @db.Date
+  spend       Decimal  @default(0) @db.Decimal(14, 2)
+  impressions Int      @default(0)
+  reach       Int      @default(0)
+  clicks      Int      @default(0)
+  leads       Int      @default(0)
+  conversions Int      @default(0)
+  revenue     Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  ad          Ad       @relation(fields: [adId], references: [id], onDelete: Cascade)
+  @@unique([adId, statDate])
+  @@index([statDate])
+  @@map("ad_metrics")
+}
+
+model AdSyncLog {
+  id          String     @id @default(uuid())
+  triggeredBy String?    @map("triggered_by")
+  source      SyncSource @default(SCHEDULED)
+  status      SyncStatus
+  adsSynced   Int        @default(0) @map("ads_synced")
+  message     String?    @db.VarChar(500)
+  startedAt   DateTime   @map("started_at")
+  finishedAt  DateTime?  @map("finished_at")
+  @@index([startedAt])
+  @@map("ad_sync_logs")
+}
+
+// ── Tasks ────────────────────────────────────────────────
+model Task {
+  id             String     @id @default(uuid())
+  taskCode       String     @unique @map("task_code")
+  title          String
+  description    String?    @db.Text
+  requirements   String?    @db.Text
+  campaignId     String?    @map("campaign_id")
+  adId           String?    @map("ad_id")
+  priority       Priority   @default(MEDIUM)
+  status         TaskStatus @default(DRAFT)
+  progress       Int        @default(0) @db.TinyInt
+  createdBy      String     @map("created_by")
+  assignedBy     String?    @map("assigned_by")
+  assignedTo     String?    @map("assigned_to")
+  estimatedHours Decimal?   @map("estimated_hours") @db.Decimal(6, 2)
+  startDate      DateTime?  @map("start_date") @db.Date
+  dueDate        DateTime?  @map("due_date") @db.Date
+  acceptedAt     DateTime?  @map("accepted_at")
+  startedAt      DateTime?  @map("started_at")
+  submittedAt    DateTime?  @map("submitted_at")
+  approvedAt     DateTime?  @map("approved_at")
+  completedAt    DateTime?  @map("completed_at")
+  revisionCount  Int        @default(0) @map("revision_count")
+  isSeed         Boolean    @default(false) @map("is_seed")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  deletedAt      DateTime?  @map("deleted_at")
+
+  campaign        Campaign?             @relation(fields: [campaignId], references: [id])
+  assignee        User?                 @relation("TaskAssignee", fields: [assignedTo], references: [id])
+  assignments     TaskAssignment[]
+  progressHistory TaskProgressHistory[]
+  statusHistory   TaskStatusHistory[]
+  versions        TaskVersion[]
+  attachments     TaskAttachment[]
+  comments        TaskComment[]
+  timeline        TaskTimeline[]
+
+  @@index([status])
+  @@index([dueDate])
+  @@index([assignedBy])
+  @@index([assignedTo])
+  @@index([campaignId])
+  @@index([createdAt])
+  @@map("tasks")
+}
+
+model TaskAssignment {
+  id           String    @id @default(uuid())
+  taskId       String    @map("task_id")
+  designerId   String    @map("designer_id")
+  assignedBy   String    @map("assigned_by")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  unassignedAt DateTime? @map("unassigned_at")
+  reason       String?
+  isCurrent    Boolean   @default(true) @map("is_current")
+  task         Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@index([taskId])
+  @@index([designerId])
+  @@index([taskId, isCurrent])
+  @@map("task_assignments")
+}
+
+model TaskProgressHistory {
+  id          String   @id @default(uuid())
+  taskId      String   @map("task_id")
+  oldProgress Int      @map("old_progress") @db.TinyInt
+  newProgress Int      @map("new_progress") @db.TinyInt
+  updatedBy   String   @map("updated_by")
+  remarks     String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@index([taskId])
+  @@map("task_progress_history")
+}
+
+model TaskStatusHistory {
+  id        String   @id @default(uuid())
+  taskId    String   @map("task_id")
+  oldStatus String?  @map("old_status")
+  newStatus String   @map("new_status")
+  changedBy String   @map("changed_by")
+  remarks   String?  @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@index([taskId])
+  @@map("task_status_history")
+}
+
+model TaskVersion {
+  id            String        @id @default(uuid())
+  taskId        String        @map("task_id")
+  versionNumber Int           @map("version_number")
+  fileName      String        @map("file_name")
+  fileUrl       String        @map("file_url") @db.VarChar(500)
+  fileType      String?       @map("file_type")
+  fileSize      BigInt?       @map("file_size")
+  uploadedBy    String        @map("uploaded_by")
+  remarks       String?       @db.VarChar(500)
+  status        VersionStatus @default(SUBMITTED)
+  createdAt     DateTime      @default(now()) @map("created_at")
+  task          Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@unique([taskId, versionNumber])
+  @@index([taskId])
+  @@map("task_versions")
+}
+
+model TaskAttachment {
+  id         String   @id @default(uuid())
+  taskId     String   @map("task_id")
+  fileName   String   @map("file_name")
+  fileUrl    String   @map("file_url") @db.VarChar(500)
+  fileType   String?  @map("file_type")
+  fileSize   BigInt?  @map("file_size")
+  uploadedBy String   @map("uploaded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@index([taskId])
+  @@map("task_attachments")
+}
+
+model TaskComment {
+  id            String   @id @default(uuid())
+  taskId        String   @map("task_id")
+  userId        String   @map("user_id")
+  message       String   @db.Text
+  attachmentUrl String?  @map("attachment_url") @db.VarChar(500)
+  createdAt     DateTime @default(now()) @map("created_at")
+  task          Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id])
+  @@index([taskId])
+  @@map("task_comments")
+}
+
+model TaskTimeline {
+  id          String   @id @default(uuid())
+  taskId      String   @map("task_id")
+  eventType   String   @map("event_type")
+  description String   @db.VarChar(500)
+  actorId     String?  @map("actor_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@index([taskId])
+  @@map("task_timeline")
+}
+
+// ── Leads → Telecalling ──────────────────────────────────
+model Lead {
+  id         String     @id @default(uuid())
+  leadCode   String     @unique @map("lead_code")
+  name       String
+  mobile     String?
+  email      String?
+  source     Platform   @default(META)
+  platform   String?
+  campaignId String?    @map("campaign_id")
+  adId       String?    @map("ad_id")
+  assignedTo String?    @map("assigned_to")
+  status     LeadStatus @default(NEW)
+  isSeed     Boolean    @default(false) @map("is_seed")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+  deletedAt  DateTime?  @map("deleted_at")
+
+  campaign      Campaign?           @relation(fields: [campaignId], references: [id])
+  ad            Ad?                 @relation(fields: [adId], references: [id])
+  telecaller    User?               @relation("LeadTelecaller", fields: [assignedTo], references: [id])
+  assignments   LeadAssignment[]
+  statusHistory LeadStatusHistory[]
+  calls         CallActivity[]
+  followups     Followup[]
+  conversions   Conversion[]
+
+  @@index([status])
+  @@index([campaignId])
+  @@index([adId])
+  @@index([assignedTo])
+  @@index([createdAt])
+  @@index([source])
+  @@map("leads")
+}
+
+model LeadAssignment {
+  id           String    @id @default(uuid())
+  leadId       String    @map("lead_id")
+  telecallerId String    @map("telecaller_id")
+  assignedBy   String    @map("assigned_by")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  unassignedAt DateTime? @map("unassigned_at")
+  isCurrent    Boolean   @default(true) @map("is_current")
+  lead         Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  @@index([leadId])
+  @@index([telecallerId])
+  @@map("lead_assignments")
+}
+
+model LeadStatusHistory {
+  id        String   @id @default(uuid())
+  leadId    String   @map("lead_id")
+  oldStatus String?  @map("old_status")
+  newStatus String   @map("new_status")
+  changedBy String   @map("changed_by")
+  remarks   String?  @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  @@index([leadId])
+  @@map("lead_status_history")
+}
+
+model CallActivity {
+  id           String      @id @default(uuid())
+  leadId       String      @map("lead_id")
+  telecallerId String      @map("telecaller_id")
+  callDate     DateTime    @default(now()) @map("call_date")
+  duration     Int         @default(0)
+  outcome      CallOutcome
+  remarks      String?     @db.VarChar(500)
+  nextFollowup DateTime?   @map("next_followup")
+  isSeed       Boolean     @default(false) @map("is_seed")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  lead         Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  @@index([leadId])
+  @@index([telecallerId])
+  @@index([callDate])
+  @@map("call_activities")
+}
+
+model Followup {
+  id           String         @id @default(uuid())
+  leadId       String         @map("lead_id")
+  assignedTo   String         @map("assigned_to")
+  followupDate DateTime       @map("followup_date")
+  status       FollowupStatus @default(PENDING)
+  remarks      String?        @db.VarChar(500)
+  completedAt  DateTime?      @map("completed_at")
+  isSeed       Boolean        @default(false) @map("is_seed")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  lead         Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  @@index([assignedTo])
+  @@index([followupDate])
+  @@index([status])
+  @@map("followups")
+}
+
+// ── Conversions & Transactions ───────────────────────────
+model Conversion {
+  id             String           @id @default(uuid())
+  conversionCode String           @unique @map("conversion_code")
+  leadId         String           @map("lead_id")
+  convertedBy    String           @map("converted_by")
+  conversionDate DateTime         @default(now()) @map("conversion_date")
+  amount         Decimal          @default(0) @db.Decimal(14, 2)
+  status         ConversionStatus @default(PENDING)
+  remarks        String?          @db.VarChar(500)
+  isSeed         Boolean          @default(false) @map("is_seed")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  lead           Lead             @relation(fields: [leadId], references: [id])
+  transactions   Transaction[]
+  @@index([leadId])
+  @@index([createdAt])
+  @@map("conversions")
+}
+
+model Transaction {
+  id              String        @id @default(uuid())
+  transactionCode String        @unique @map("transaction_code")
+  conversionId    String        @map("conversion_id")
+  leadId          String        @map("lead_id")
+  amount          Decimal       @default(0) @db.Decimal(14, 2)
+  paymentMethod   PaymentMethod @default(UPI) @map("payment_method")
+  paymentStatus   PaymentStatus @default(PENDING) @map("payment_status")
+  paymentDate     DateTime?     @map("payment_date")
+  isSeed          Boolean       @default(false) @map("is_seed")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  conversion      Conversion    @relation(fields: [conversionId], references: [id])
+  @@index([conversionId])
+  @@index([leadId])
+  @@index([paymentStatus])
+  @@index([paymentDate])
+  @@map("transactions")
+}
+
+// ── System ───────────────────────────────────────────────
+model Notification {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  type       String
+  title      String
+  message    String   @db.VarChar(500)
+  entityType String?  @map("entity_type")
+  entityId   String?  @map("entity_id")
+  isRead     Boolean  @default(false) @map("is_read")
+  createdAt  DateTime @default(now()) @map("created_at")
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  oldValue   Json?    @map("old_value")
+  newValue   Json?    @map("new_value")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent") @db.VarChar(500)
+  createdAt  DateTime @default(now()) @map("created_at")
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model DailyPerformance {
+  id            String   @id @default(uuid())
+  statDate      DateTime @map("stat_date") @db.Date
+  scope         String   // GLOBAL | designer:<id> | telecaller:<id>
+  adSpend       Decimal  @default(0) @map("ad_spend") @db.Decimal(14, 2)
+  leads         Int      @default(0)
+  cpl           Decimal  @default(0) @db.Decimal(14, 2)
+  qualified     Int      @default(0)
+  notInterested Int      @default(0) @map("not_interested")
+  calls         Int      @default(0)
+  connected     Int      @default(0)
+  interested    Int      @default(0)
+  converted     Int      @default(0)
+  conversions   Int      @default(0)
+  revenue       Decimal  @default(0) @db.Decimal(14, 2)
+  tasksAssigned Int      @default(0) @map("tasks_assigned")
+  tasksCompleted Int     @default(0) @map("tasks_completed")
+  tasksPending  Int      @default(0) @map("tasks_pending")
+  tasksOverdue  Int      @default(0) @map("tasks_overdue")
+  createdAt     DateTime @default(now()) @map("created_at")
+  @@unique([statDate, scope])
+  @@index([statDate])
+  @@map("daily_performance")
+}
+
+enum MetaStatus {
+  NOT_CONNECTED
+  CONNECTED
+  ERROR
+}
+
+/// Meta/Facebook Ads connection. One active connection per workspace (provider = 'meta').
+/// Access tokens are stored server-side only and never exposed to the frontend.
+model MetaConnection {
+  id             String     @id @default(uuid())
+  provider       String     @unique @default("meta")
+  status         MetaStatus @default(NOT_CONNECTED)
+  adAccountId    String?    @map("ad_account_id")
+  adAccountName  String?    @map("ad_account_name")
+  pageId         String?    @map("page_id")
+  pageName       String?    @map("page_name")
+  instagramId    String?    @map("instagram_id")
+  accessToken    String?    @map("access_token") @db.Text
+  tokenExpiresAt DateTime?  @map("token_expires_at")
+  scopes         String?    @db.VarChar(500)
+  lastSyncAt     DateTime?  @map("last_sync_at")
+  lastError      String?    @map("last_error") @db.VarChar(500)
+  isMock         Boolean    @default(false) @map("is_mock")
+  connectedBy    String?    @map("connected_by")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+  @@map("meta_connections")
+}
