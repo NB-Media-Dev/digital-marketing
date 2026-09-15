@@ -6,9 +6,9 @@ FROM node:20-slim
 RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-ENV NODE_ENV=production
 
-# Install deps (dev deps are needed to build; kept small enough for staging).
+# Install deps (dev deps are needed to build; NODE_ENV is NOT set yet here,
+# so npm ci installs devDependencies too — including typescript).
 COPY package*.json ./
 RUN npm ci
 
@@ -18,6 +18,9 @@ RUN npm run build
 
 # Uploaded files live here (use object storage in real production — see docs).
 RUN mkdir -p uploads
+
+# Switch to production mode only now that the build is done.
+ENV NODE_ENV=production
 
 EXPOSE 5000
 # Apply schema then start. For migration history use `prisma migrate deploy` instead of db push.
